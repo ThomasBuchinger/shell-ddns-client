@@ -1,20 +1,24 @@
 
 # =========================================================
-# Cloudflare IP & DDNS Provider
+# Cloudflare IP Provider
 # =========================================================
-function check_provider_cloudflare {
+function ip_cloudflare {
+  local URL="https://1.1.1.1/cdn-cgi/trace"
+  local ipv4=$(curl -s $URL | grep 'ip=' | cut -d '=' -f 2)
+  echo "A=$ipv4"
+}
+
+# =========================================================
+# Cloudflare DDNS Provider
+# =========================================================
+function check_ddns_cloudflare {
   check_binary 'curl'
   check_fn_exists 'provider_cloudflare_auth'
   check_fn_exists 'provider_cloudflare_zone_to_id'
 
   provider_cloudflare_auth > /dev/null
 }
-function ip_provider_cloudflare {
-  local URL="https://1.1.1.1/cdn-cgi/trace"
-  local ipv4=$(curl -s $URL | grep 'ip=' | cut -d '=' -f 2)
-  echo "A=$ipv4"
-}
-function ddns_provider_cloudflare {
+function ddns_cloudflare {
   local HOSTNAME=$1
   local IP=$2
   local REC_TYPE=$3
@@ -75,7 +79,7 @@ function provider_cloudflare_update_record {
   local zone=$4
   local record=$5
   local CLOUDFLARE_ZONE_DNS_RECORDS_UPDATE_API="https://api.cloudflare.com/client/v4/zones/${zone}/dns_records/${record}"  # PATCH
-  local post_data="{\"type\":\"${type}\",\"name\":\"${fqdn}\",\"content\":\"${ip}\",\"ttl\":120,\"proxied\":true}"
+  local post_data="{\"type\":\"${type}\",\"name\":\"${fqdn}\",\"content\":\"${ip}\",\"ttl\":120}"
 
   update=$(provider_cloudflare_post "UPDATE $fqdn" "$CLOUDFLARE_ZONE_DNS_RECORDS_UPDATE_API" "$post_data" "PATCH") || exit $?
 }

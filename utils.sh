@@ -93,6 +93,9 @@ function check_fn_exists {
   exit_on_error $? "$1 not found!"
 }
 
+# Resolve hostname to fqdn
+# Mostly handles the special host @
+#
 function host_to_fqdn {
   local host=$1
   local zone_name=$2
@@ -108,12 +111,14 @@ function host_to_fqdn {
   echo $FQDN 
 }
 
+# Print all the help
+#
 function help {
   echo "Usage: DDNS_SOURCE=/path/to/parameters.env $0"
   echo ""
   echo "Supported ENV variables:"
   echo "  DDNS_MODE:        update-now: Update DDNS_HOSTNAMES using a provider"
-#  echo "                    check: Compare current DNS entry against current public ip"
+  echo "                    check: Compare current DNS entry against current public ip"
   echo "                    help: print this message"
   echo "                    noop: May be used to include this script"
   echo "  DDNS_SOURCE       source a file for ENV varaiables"
@@ -123,8 +128,8 @@ function help {
   echo "                    Using '@' updates the root of the domain"
   echo "                    Example: 'www api @'"
   echo "  DDNS_DOMAIN:      Your DDNS-Domain name"
-#  echo "  DDNS_QUERY:       Used only in check-mode. Compare ip address of a specific host (instead of all DDNS_HOSTNAMES"
-  echo "  DDNS_LOGLEVEL:    Change LogLevel: 0...No Logs, 1...Short Logs, 2...Detailed Logs, 3...Dump Debug info"
+  echo "  DDNS_QUERY:       Used only in check-mode. Compare ip address of a specific host (instead of all DDNS_HOSTNAMES"
+  echo "  DDNS_LOG_LEVEL:   Change LogLevel: 0...No Logs, 1...Short Logs, 2...Detailed Logs, 3...Dump Debug info"
   echo ""
   echo "Provider Cloudflare (DDNS_PROVIDER=cloudflare):"
   echo "  DDNS_CF_AUTHTYPE: Use token or apikey authentication"

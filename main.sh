@@ -6,10 +6,11 @@ if [ ! -z "$SOURCE" ]; then
   source $SOURCE
 fi
 
-MODE=${DDNS_MODE:-help}                     # Change Script mode
-LOG_LEVEL=${DDNS_LOG_LEVEL:-1}              # 0...Silent to 3...Debug
-IP_PROVIDER=${DDNS_IP_PROVIDER:-cloudflare} # Where to query the public IP
-DDNS_PROVIDER=${DDNS_PROVIDER:-mock}        # DDNS provider to update
+MODE=${DDNS_MODE:-help}                            # Change Script mode
+LOG_LEVEL=${DDNS_LOG_LEVEL:-1}                     # 0...Silent to 3...Debug
+IP_PROVIDER=${DDNS_IP_PROVIDER:-cloudflare}        # Where to query the public IP
+DDNS_PROVIDER=${DDNS_PROVIDER:-mock}               # DDNS provider to update
+DNS_QUERY_PROVIDER=${DDNS_DNS_QUERY_PROVIDER:-dig} # How to query DNS (for check)
 
 # =========================================================
 # Main Functions
@@ -20,14 +21,14 @@ function update_now {
   check_binary 'curl'
   check_binary 'grep'
   check_binary 'tr'
-  check_fn_exists "ip_provider_${IP_PROVIDER}"
+  check_fn_exists "ip_${IP_PROVIDER}"
   get_param "HOSTNAMES" > /dev/null
   get_param "DOMAIN" > /dev/null
-  check_provider_${DDNS_PROVIDER} || exit $?
+  check_ddns_${DDNS_PROVIDER} || exit $?
 
   # Get public IP
   log 2 "Using IP provider: ${IP_PROVIDER}"
-  PUBLIC_IP=$("ip_provider_${IP_PROVIDER}")
+  PUBLIC_IP=$("ip_${IP_PROVIDER}")
   for IP in $PUBLIC_IP; do
     log 2 "Public IP is: $IP"
   done
@@ -39,36 +40,69 @@ function update_now {
     local IP_ADDR=$(echo $IP | cut -d '=' -f 2)
     
     for HOST in $(get_param "HOSTNAMES"); do
-      # TODO: ddns_prodiver call cannot fail...
-      DDNS_RESULT=$(ddns_provider_${DDNS_PROVIDER} $HOST $IP_ADDR $REC_TYPE $DOMAIN)
+      DDNS_RESULT=$(ddns_${DDNS_PROVIDER} $HOST $IP_ADDR $REC_TYPE $DOMAIN)
       DDNS_RC=$?
-      echo $DDNS_RESULT
       print_ddns_update $HOST $IP_ADDR $REC_TYPE $DDNS_RC "$DDNS_RESULT"
     done
   done
 }
 
 #Check if update is needed
-#function check {
-#  check_binary 'curl'
-#  check_binary 'grep'
-#  check_fn_exists "ip_provider_${IP_PROVIDER}"
-##  get_param "HOSTNAMES" > /dev/null
-##  get_param "DOMAIN" > /dev/null
-#
-#  # Get public IP
-#  log 2 "Using IP provider: ${IP_PROVIDER}"
-#  PUBLIC_IP=$("ip_provider_${IP_PROVIDER}")
-#  for IP in $PUBLIC_IP; do
-#    log 2 "Public IP is: $IP"
-#  done
-#
-#  QUERY_HOST=get_param "QUERY" ""
-#}
+function check {
+  local query_prog=$DNS_QUERY_PROVIDER
+  check_binary $query_prog
+  check_fn_exists "query_${query_prog}"
+  check_fn_exists "ip_${IP_PROVIDER}"
+
+  # Get public IP
+  log 2 "Using IP provider: ${IP_PROVIDER}"
+  PUBLIC_IP=$("ip_${IP_PROVIDER}")
+  for IP in $PUBLIC_IP; do
+    log 2 "Public IP is: $IP"
+  done
+
+  # Query current IPs
+  local query_results=""
+  QUERY_HOST=$(get_param "QUERY" "")
+  for IP in $PUBLIC_IP;  do
+    local REC_TYPE=$(echo $IP | cut -d '=' -f 1)
+    local IP_ADDR=$(echo $IP | cut -d '=' -f 2)
+
+    if [ ! -z ${QUERY_HOST} ]; then
+      log 3 "Query $QUERY_HOST in DNS"
+      dns_ip=$(query_${query_prog} "${QUERY_HOST}" $REC_TYPE)
+      log 2 "Queried $QUERY_HOST in DNS: public_ip=$IP_ADDR dns=$dns_ip"
+      query_results="${query_results} $QUERY_HOST=$IP_ADDR=$dns_ip"
+    else
+      get_param "HOSTNAMES" > /dev/null
+      get_param "DOMAIN" > /dev/null
+      for HOST in $(get_param "HOSTNAMES"); do
+	local fqdn=$(host_to_fqdn $HOST) # host_to_fqdn can query the domain itself 
+        log 3 "Query $fqdn in DNS"
+        dns_ip=$(query_${query_prog} "${fqdn}" $REC_TYPE)
+        log 2 "Queried $fqdn in DNS: public_ip=$IP_ADDR dns=$dns_ip"
+        query_results="${query_results} $fqdn=$IP_ADDR=$dns_ip"
+      done
+    fi
+  done
+
+  # Print result
+  local message=""
+  for entry in $query_results; do
+    name=$(echo $entry | cut -d '=' -f 1)
+    public_ip=$(echo $entry | cut -d '=' -f 2)
+    dns_ip=$(echo $entry | cut -d '=' -f 3)
+    if [ $public_ip != $dns_ip ]; then
+      message="${message}Host $name out-of-date: dns_ip=$dns_ip public_ip=$public_ip\n"
+    fi
+  done
+  log 1 "$message"
+  if [ "$message" = "" ]; then exit 0; else exit 2; fi
+}
 
 case ${MODE} in
   update-now) update_now ;;
-#  "check") check ;;
+  check) check ;;
   help) help ;;
   noop) ;;
   *) echo "Unknown mode: ${MODE}. Use DDNS_MODE=help to print help"; ;;

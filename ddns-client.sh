@@ -1,20 +1,24 @@
 
 # =========================================================
-# Cloudflare IP & DDNS Provider
+# Cloudflare IP Provider
 # =========================================================
-function check_provider_cloudflare {
+function ip_cloudflare {
+  local URL="https://1.1.1.1/cdn-cgi/trace"
+  local ipv4=$(curl -s $URL | grep 'ip=' | cut -d '=' -f 2)
+  echo "A=$ipv4"
+}
+
+# =========================================================
+# Cloudflare DDNS Provider
+# =========================================================
+function check_ddns_cloudflare {
   check_binary 'curl'
   check_fn_exists 'provider_cloudflare_auth'
   check_fn_exists 'provider_cloudflare_zone_to_id'
 
   provider_cloudflare_auth > /dev/null
 }
-function ip_provider_cloudflare {
-  local URL="https://1.1.1.1/cdn-cgi/trace"
-  local ipv4=$(curl -s $URL | grep 'ip=' | cut -d '=' -f 2)
-  echo "A=$ipv4"
-}
-function ddns_provider_cloudflare {
+function ddns_cloudflare {
   local HOSTNAME=$1
   local IP=$2
   local REC_TYPE=$3
@@ -75,7 +79,7 @@ function provider_cloudflare_update_record {
   local zone=$4
   local record=$5
   local CLOUDFLARE_ZONE_DNS_RECORDS_UPDATE_API="https://api.cloudflare.com/client/v4/zones/${zone}/dns_records/${record}"  # PATCH
-  local post_data="{\"type\":\"${type}\",\"name\":\"${fqdn}\",\"content\":\"${ip}\",\"ttl\":120,\"proxied\":true}"
+  local post_data="{\"type\":\"${type}\",\"name\":\"${fqdn}\",\"content\":\"${ip}\",\"ttl\":120}"
 
   update=$(provider_cloudflare_post "UPDATE $fqdn" "$CLOUDFLARE_ZONE_DNS_RECORDS_UPDATE_API" "$post_data" "PATCH") || exit $?
 }
@@ -132,6 +136,15 @@ function provider_cloudflare_auth {
     exit_with_error 1 "Unsupported cloudflare auth_type: $auth_type"
   fi
 }
+
+# Query DNS using dig
+#
+function query_dig {
+  local fqdn=$1
+  local rec_type=${2:-A}
+  echo $(dig +short -t $rec_type $fqdn "@1.1.1.1")
+}
+
 
 # =========================================================
 # Reference IP & DDNS Provider
@@ -244,6 +257,9 @@ function check_fn_exists {
   exit_on_error $? "$1 not found!"
 }
 
+# Resolve hostname to fqdn
+# Mostly handles the special host @
+#
 function host_to_fqdn {
   local host=$1
   local zone_name=$2
@@ -259,12 +275,14 @@ function host_to_fqdn {
   echo $FQDN 
 }
 
+# Print all the help
+#
 function help {
   echo "Usage: DDNS_SOURCE=/path/to/parameters.env $0"
   echo ""
   echo "Supported ENV variables:"
   echo "  DDNS_MODE:        update-now: Update DDNS_HOSTNAMES using a provider"
-#  echo "                    check: Compare current DNS entry against current public ip"
+  echo "                    check: Compare current DNS entry against current public ip"
   echo "                    help: print this message"
   echo "                    noop: May be used to include this script"
   echo "  DDNS_SOURCE       source a file for ENV varaiables"
@@ -274,8 +292,8 @@ function help {
   echo "                    Using '@' updates the root of the domain"
   echo "                    Example: 'www api @'"
   echo "  DDNS_DOMAIN:      Your DDNS-Domain name"
-#  echo "  DDNS_QUERY:       Used only in check-mode. Compare ip address of a specific host (instead of all DDNS_HOSTNAMES"
-  echo "  DDNS_LOGLEVEL:    Change LogLevel: 0...No Logs, 1...Short Logs, 2...Detailed Logs, 3...Dump Debug info"
+  echo "  DDNS_QUERY:       Used only in check-mode. Compare ip address of a specific host (instead of all DDNS_HOSTNAMES"
+  echo "  DDNS_LOG_LEVEL:   Change LogLevel: 0...No Logs, 1...Short Logs, 2...Detailed Logs, 3...Dump Debug info"
   echo ""
   echo "Provider Cloudflare (DDNS_PROVIDER=cloudflare):"
   echo "  DDNS_CF_AUTHTYPE: Use token or apikey authentication"
@@ -292,10 +310,11 @@ if [ ! -z "$SOURCE" ]; then
   source $SOURCE
 fi
 
-MODE=${DDNS_MODE:-help}                     # Change Script mode
-LOG_LEVEL=${DDNS_LOG_LEVEL:-1}              # 0...Silent to 3...Debug
-IP_PROVIDER=${DDNS_IP_PROVIDER:-cloudflare} # Where to query the public IP
-DDNS_PROVIDER=${DDNS_PROVIDER:-mock}        # DDNS provider to update
+MODE=${DDNS_MODE:-help}                            # Change Script mode
+LOG_LEVEL=${DDNS_LOG_LEVEL:-1}                     # 0...Silent to 3...Debug
+IP_PROVIDER=${DDNS_IP_PROVIDER:-cloudflare}        # Where to query the public IP
+DDNS_PROVIDER=${DDNS_PROVIDER:-mock}               # DDNS provider to update
+DNS_QUERY_PROVIDER=${DDNS_DNS_QUERY_PROVIDER:-dig} # How to query DNS (for check)
 
 # =========================================================
 # Main Functions
@@ -306,14 +325,14 @@ function update_now {
   check_binary 'curl'
   check_binary 'grep'
   check_binary 'tr'
-  check_fn_exists "ip_provider_${IP_PROVIDER}"
+  check_fn_exists "ip_${IP_PROVIDER}"
   get_param "HOSTNAMES" > /dev/null
   get_param "DOMAIN" > /dev/null
-  check_provider_${DDNS_PROVIDER} || exit $?
+  check_ddns_${DDNS_PROVIDER} || exit $?
 
   # Get public IP
   log 2 "Using IP provider: ${IP_PROVIDER}"
-  PUBLIC_IP=$("ip_provider_${IP_PROVIDER}")
+  PUBLIC_IP=$("ip_${IP_PROVIDER}")
   for IP in $PUBLIC_IP; do
     log 2 "Public IP is: $IP"
   done
@@ -325,36 +344,69 @@ function update_now {
     local IP_ADDR=$(echo $IP | cut -d '=' -f 2)
     
     for HOST in $(get_param "HOSTNAMES"); do
-      # TODO: ddns_prodiver call cannot fail...
-      DDNS_RESULT=$(ddns_provider_${DDNS_PROVIDER} $HOST $IP_ADDR $REC_TYPE $DOMAIN)
+      DDNS_RESULT=$(ddns_${DDNS_PROVIDER} $HOST $IP_ADDR $REC_TYPE $DOMAIN)
       DDNS_RC=$?
-      echo $DDNS_RESULT
       print_ddns_update $HOST $IP_ADDR $REC_TYPE $DDNS_RC "$DDNS_RESULT"
     done
   done
 }
 
 #Check if update is needed
-#function check {
-#  check_binary 'curl'
-#  check_binary 'grep'
-#  check_fn_exists "ip_provider_${IP_PROVIDER}"
-##  get_param "HOSTNAMES" > /dev/null
-##  get_param "DOMAIN" > /dev/null
-#
-#  # Get public IP
-#  log 2 "Using IP provider: ${IP_PROVIDER}"
-#  PUBLIC_IP=$("ip_provider_${IP_PROVIDER}")
-#  for IP in $PUBLIC_IP; do
-#    log 2 "Public IP is: $IP"
-#  done
-#
-#  QUERY_HOST=get_param "QUERY" ""
-#}
+function check {
+  local query_prog=$DNS_QUERY_PROVIDER
+  check_binary $query_prog
+  check_fn_exists "query_${query_prog}"
+  check_fn_exists "ip_${IP_PROVIDER}"
+
+  # Get public IP
+  log 2 "Using IP provider: ${IP_PROVIDER}"
+  PUBLIC_IP=$("ip_${IP_PROVIDER}")
+  for IP in $PUBLIC_IP; do
+    log 2 "Public IP is: $IP"
+  done
+
+  # Query current IPs
+  local query_results=""
+  QUERY_HOST=$(get_param "QUERY" "")
+  for IP in $PUBLIC_IP;  do
+    local REC_TYPE=$(echo $IP | cut -d '=' -f 1)
+    local IP_ADDR=$(echo $IP | cut -d '=' -f 2)
+
+    if [ ! -z ${QUERY_HOST} ]; then
+      log 3 "Query $QUERY_HOST in DNS"
+      dns_ip=$(query_${query_prog} "${QUERY_HOST}" $REC_TYPE)
+      log 2 "Queried $QUERY_HOST in DNS: public_ip=$IP_ADDR dns=$dns_ip"
+      query_results="${query_results} $QUERY_HOST=$IP_ADDR=$dns_ip"
+    else
+      get_param "HOSTNAMES" > /dev/null
+      get_param "DOMAIN" > /dev/null
+      for HOST in $(get_param "HOSTNAMES"); do
+	local fqdn=$(host_to_fqdn $HOST) # host_to_fqdn can query the domain itself 
+        log 3 "Query $fqdn in DNS"
+        dns_ip=$(query_${query_prog} "${fqdn}" $REC_TYPE)
+        log 2 "Queried $fqdn in DNS: public_ip=$IP_ADDR dns=$dns_ip"
+        query_results="${query_results} $fqdn=$IP_ADDR=$dns_ip"
+      done
+    fi
+  done
+
+  # Print result
+  local message=""
+  for entry in $query_results; do
+    name=$(echo $entry | cut -d '=' -f 1)
+    public_ip=$(echo $entry | cut -d '=' -f 2)
+    dns_ip=$(echo $entry | cut -d '=' -f 3)
+    if [ $public_ip != $dns_ip ]; then
+      message="${message}Host $name out-of-date: dns_ip=$dns_ip public_ip=$public_ip\n"
+    fi
+  done
+  log 1 "$message"
+  if [ "$message" = "" ]; then exit 0; else exit 2; fi
+}
 
 case ${MODE} in
   update-now) update_now ;;
-#  "check") check ;;
+  check) check ;;
   help) help ;;
   noop) ;;
   *) echo "Unknown mode: ${MODE}. Use DDNS_MODE=help to print help"; ;;
