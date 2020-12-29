@@ -1,22 +1,5 @@
 
 # =========================================================
-# Reference IP & DDNS Provider
-# =========================================================
-function check_provider {
-  return 0
-}
-function ip_provider_mock { 
-  echo "A=1.2.3.4" # One or more IPv4 Addresses
-  echo "AAAA=2001:db8::1" # One or more IPv6 Addresses 
-}
-function ddns_provider_mock {
-  # $1...Record type (A or AAAA)
-  # $2...IP address
-  echo "Eample=Key-Value pairs of useful information regarding the ddns update"
-  return 0
-}
-
-# =========================================================
 # Cloudflare IP & DDNS Provider
 # =========================================================
 function check_provider_cloudflare {
@@ -24,7 +7,6 @@ function check_provider_cloudflare {
   check_fn_exists 'provider_cloudflare_auth'
   check_fn_exists 'provider_cloudflare_zone_to_id'
 
-  get_param "CF_DOMAIN" > /dev/null
   provider_cloudflare_auth > /dev/null
 }
 function ip_provider_cloudflare {
@@ -36,12 +18,8 @@ function ddns_provider_cloudflare {
   local HOSTNAME=$1
   local IP=$2
   local REC_TYPE=$3
-  local zone_name=$(get_param "CF_DOMAIN")
-  if [ ${HOSTNAME} == "@" ]; then 
-    local FQDN=${zone_name}
-  else
-    local FQDN="${HOSTNAME}.${zone_name}"
-  fi
+  local zone_name=$4
+  local FQDN=$(host_to_fqdn $HOSTNAME $zone_name)
 
   if [ ${CF_ZONE_ID:-""} == "" ]; then
     CF_ZONE_ID=$(provider_cloudflare_zone_to_id $zone_name) || exit $?
@@ -50,12 +28,23 @@ function ddns_provider_cloudflare {
   fi
   echo "zone_id=$CF_ZONE_ID"
   echo "zone_name=$zone_name"
-  echo "auth_info=$(provider_cloudflare_auth)"
+  echo "auth_info=$(provider_cloudflare_auth | tr ' ' '-')"
   
-  record_id=$(provider_cloudflare_name_to_id "${FQDN}" $CF_ZONE_ID) || exit $?
+  output=$(provider_cloudflare_name_to_id "${FQDN}" $CF_ZONE_ID) || exit $?
+  local record_id=$(extract_key "$output" "record_id")
+  local current_ip=$(extract_key "$output" "current_ip")
   echo "record_id=$record_id"
+  echo "old_ip=$current_ip"
+
+  if [ $current_ip == $IP ]; then
+    echo "update_needed=false"
+    echo "success=true"
+    exit 0
+  fi
+
 
   update=$(provider_cloudflare_update_record $REC_TYPE "${FQDN}" $IP $CF_ZONE_ID $record_id ) || exit $?
+  echo "update_needed=true"
   echo "success=true" 
 }
 function provider_cloudflare_name_to_id {
@@ -64,8 +53,10 @@ function provider_cloudflare_name_to_id {
   local CLOUDFLARE_ZONE_DNS_RECORDS_QUERY_API="https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records"  # GET
 
   record_list=$(provider_cloudflare_api "GET_RECORD ${name}" "${CLOUDFLARE_ZONE_DNS_RECORDS_QUERY_API}?per_page=50&name=${name}") || exit $?
+  local ip=$(extract_from "$record_list" "content" | head -1)
   local id=$(extract_from "$record_list" "id" | head -1)
-  echo ${id} 
+  echo "current_ip=${ip}"
+  echo "record_id=${id}"
 }
 
 function provider_cloudflare_zone_to_id {
@@ -141,6 +132,23 @@ function provider_cloudflare_auth {
     exit_with_error 1 "Unsupported cloudflare auth_type: $auth_type"
   fi
 }
+
+# =========================================================
+# Reference IP & DDNS Provider
+# =========================================================
+function check_provider {
+  return 0
+}
+function ip_provider_mock { 
+  echo "A=1.2.3.4" # One or more IPv4 Addresses
+  echo "AAAA=2001:db8::1" # One or more IPv6 Addresses 
+}
+function ddns_provider_mock {
+  # $1...Record type (A or AAAA)
+  # $2...IP address
+  echo "Eample=Key-Value pairs of useful information regarding the ddns update"
+  return 0
+}
 # =========================================================
 # Script validation and utility functions
 # =========================================================
@@ -156,8 +164,8 @@ function print_ddns_update {
   local DDNS_RESULT=$5
 
   log 1 "Update $NAME with $IP_ADDR: $SUCCESS"
-  for line in $(echo $DDNS_RESULT); do
-    echo -e "  $line"
+  for line in $DDNS_RESULT; do
+    echo "  $line"
   done
 }
 
@@ -195,25 +203,31 @@ function get_param {
 
 # Extract value from JSON string
 #
+# Known Issues:
+# * Matches multiple entries if search_string is a substring of multiple keys
 function extract_from {
   local data=$1
   local search_string=$2
-  local match=$(echo $data | grep -o -P "\"$2\":\"?\K[^,].*?(?=\"?,)")
-  log 3 "Matching grep pattern: \"$2\":\K[^,].*?(?=,) | Result $match"
+  # REGEX:
+  #              # Search 'search_string' with double quotes around it
+  #                                  # colon, whitespaces and optional quote
+  #                                         # \K discards everything until now from --only-matching output
+  #                                               # capture value
+  #                                                  # (?=) discard from --only-matching output
+  #                                                     # End with comma, ] or } (and optional quote)
+  local pattern="\"${search_string}\":\s*\"?\K[^,].*?(?=\"?[,\]\}])"
+  local match=$(echo "$data" | grep --only-matching --perl-regexp $pattern)
+  log 3 "Matching grep pattern: $pattern | Result $match"
   echo "$match"
 }
-
-# Generate (flat) json by key-value pairs
-#
-#function to_json {
-#  echo '{'
-#  for line in $1; do
-#    key=$(echo $line | cut -d '=' -f 1)
-#    value=$(echo $line | cut -d '=' -f 2)
-#    echo "\"$ey\":\"$value\","
-#  done
-#  echo "}"
-#}
+function extract_key {
+  local data=$1
+  local key=$2
+  local pattern="^${key}=\K.*?$"
+  local match=$(echo "$data" | grep --only-matching --perl-regexp $pattern )
+  log 3 "Extracting: key=${key} value=${match}"
+  echo $match
+}
 
 # Check if executable is in PATH
 #
@@ -230,8 +244,45 @@ function check_fn_exists {
   exit_on_error $? "$1 not found!"
 }
 
-#!/bin/bash
+function host_to_fqdn {
+  local host=$1
+  local zone_name=$2
+  if [ -z ${zone_name} ]; then
+    local zone_name=$(get_param "DOMAIN")
+  fi
 
+  if [ ${host} == "@" ]; then 
+    local FQDN=${zone_name}
+  else
+    local FQDN="${host}.${zone_name}"
+  fi
+  echo $FQDN 
+}
+
+function help {
+  echo "Usage: DDNS_SOURCE=/path/to/parameters.env $0"
+  echo ""
+  echo "Supported ENV variables:"
+  echo "  DDNS_MODE:        update-now: Update DDNS_HOSTNAMES using a provider"
+#  echo "                    check: Compare current DNS entry against current public ip"
+  echo "                    help: print this message"
+  echo "                    noop: May be used to include this script"
+  echo "  DDNS_SOURCE       source a file for ENV varaiables"
+  echo "  DDNS_PROVIDER:    Select a supportd provider (currently only cloudflare)"
+  echo "  DDNS_IP_PROVIDER: Select a supported public ip query service"
+  echo "  DDNS_HOSTNAMES:   list of hostnames to update. Hostnames do not include the domain."
+  echo "                    Using '@' updates the root of the domain"
+  echo "                    Example: 'www api @'"
+  echo "  DDNS_DOMAIN:      Your DDNS-Domain name"
+#  echo "  DDNS_QUERY:       Used only in check-mode. Compare ip address of a specific host (instead of all DDNS_HOSTNAMES"
+  echo "  DDNS_LOGLEVEL:    Change LogLevel: 0...No Logs, 1...Short Logs, 2...Detailed Logs, 3...Dump Debug info"
+  echo ""
+  echo "Provider Cloudflare (DDNS_PROVIDER=cloudflare):"
+  echo "  DDNS_CF_AUTHTYPE: Use token or apikey authentication"
+  echo "  DDNS_CF_TOKEN:    Token. Permissions nedded: All Zones Read, DNS Edit"
+  echo "  DDNS_CF_APIUSER:  Cloudflare Username for apikey authentication"
+  echo "  DDNS_CF_APIKEY:   Cloudflare API Key for apikey authentication"
+}
 
 # =========================================================
 # Variables
@@ -241,13 +292,13 @@ if [ ! -z "$SOURCE" ]; then
   source $SOURCE
 fi
 
-MODE=${DDNS_MODE:-update-now}               # Change Script mode
+MODE=${DDNS_MODE:-help}                     # Change Script mode
 LOG_LEVEL=${DDNS_LOG_LEVEL:-1}              # 0...Silent to 3...Debug
 IP_PROVIDER=${DDNS_IP_PROVIDER:-cloudflare} # Where to query the public IP
 DDNS_PROVIDER=${DDNS_PROVIDER:-mock}        # DDNS provider to update
 
 # =========================================================
-# Main program
+# Main Functions
 # =========================================================
 
 # Update DDNS record
@@ -257,6 +308,7 @@ function update_now {
   check_binary 'tr'
   check_fn_exists "ip_provider_${IP_PROVIDER}"
   get_param "HOSTNAMES" > /dev/null
+  get_param "DOMAIN" > /dev/null
   check_provider_${DDNS_PROVIDER} || exit $?
 
   # Get public IP
@@ -266,22 +318,44 @@ function update_now {
     log 2 "Public IP is: $IP"
   done
 
-  # Update Cloudflare
+  # Update DDNS provider (one host/ip-type at a time)
+  local DOMAIN=$(get_param "DOMAIN")
   for IP in $PUBLIC_IP;  do
     local REC_TYPE=$(echo $IP | cut -d '=' -f 1)
     local IP_ADDR=$(echo $IP | cut -d '=' -f 2)
     
     for HOST in $(get_param "HOSTNAMES"); do
       # TODO: ddns_prodiver call cannot fail...
-      DDNS_RESULT=$(ddns_provider_${DDNS_PROVIDER} $HOST $IP_ADDR $REC_TYPE)
+      DDNS_RESULT=$(ddns_provider_${DDNS_PROVIDER} $HOST $IP_ADDR $REC_TYPE $DOMAIN)
       DDNS_RC=$?
       echo $DDNS_RESULT
-      print_ddns_update $HOST $IP_ADDR $REC_TYPE $DDNS_RC $DDNS_RESULT
+      print_ddns_update $HOST $IP_ADDR $REC_TYPE $DDNS_RC "$DDNS_RESULT"
     done
   done
 }
 
-case $MODE in
+#Check if update is needed
+#function check {
+#  check_binary 'curl'
+#  check_binary 'grep'
+#  check_fn_exists "ip_provider_${IP_PROVIDER}"
+##  get_param "HOSTNAMES" > /dev/null
+##  get_param "DOMAIN" > /dev/null
+#
+#  # Get public IP
+#  log 2 "Using IP provider: ${IP_PROVIDER}"
+#  PUBLIC_IP=$("ip_provider_${IP_PROVIDER}")
+#  for IP in $PUBLIC_IP; do
+#    log 2 "Public IP is: $IP"
+#  done
+#
+#  QUERY_HOST=get_param "QUERY" ""
+#}
+
+case ${MODE} in
   update-now) update_now ;;
-  *) echo "Unknown mode: $MODE"; ;;
+#  "check") check ;;
+  help) help ;;
+  noop) ;;
+  *) echo "Unknown mode: ${MODE}. Use DDNS_MODE=help to print help"; ;;
 esac

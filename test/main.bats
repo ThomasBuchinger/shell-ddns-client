@@ -11,7 +11,7 @@ load 'helper'
   export DDNS_MODE=mymode
   run sh main.sh
   [ "$status" -eq 0 ]
-  [ "$output" = "Unknown mode: mymode" ]
+  [ "$output" = "Unknown mode: mymode. Use DDNS_MODE=help to print help" ]
 }
 @test "main: Can source files" {
   skip
@@ -23,11 +23,3 @@ load 'helper'
   [ "$output" = "hello world\nUnknown mode: mymode" ]
 }
 
-@test "main: Runs update-now with mocks" {
-  skip
-  export DDNS_IP_PROVIDER=mock
-  export DDNS_PROVIDER=mock
-  run sh main.sh
-  [ "$status" -eq 0 ]
-  [ "$output" = "Unknown mode: mymode" ]
-}

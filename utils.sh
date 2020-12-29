@@ -13,8 +13,8 @@ function print_ddns_update {
   local DDNS_RESULT=$5
 
   log 1 "Update $NAME with $IP_ADDR: $SUCCESS"
-  for line in $(echo $DDNS_RESULT); do
-    echo -e "  $line"
+  for line in $DDNS_RESULT; do
+    echo "  $line"
   done
 }
 
@@ -52,25 +52,31 @@ function get_param {
 
 # Extract value from JSON string
 #
+# Known Issues:
+# * Matches multiple entries if search_string is a substring of multiple keys
 function extract_from {
   local data=$1
   local search_string=$2
-  local match=$(echo $data | grep -o -P "\"$2\":\"?\K[^,].*?(?=\"?,)")
-  log 3 "Matching grep pattern: \"$2\":\K[^,].*?(?=,) | Result $match"
+  # REGEX:
+  #              # Search 'search_string' with double quotes around it
+  #                                  # colon, whitespaces and optional quote
+  #                                         # \K discards everything until now from --only-matching output
+  #                                               # capture value
+  #                                                  # (?=) discard from --only-matching output
+  #                                                     # End with comma, ] or } (and optional quote)
+  local pattern="\"${search_string}\":\s*\"?\K[^,].*?(?=\"?[,\]\}])"
+  local match=$(echo "$data" | grep --only-matching --perl-regexp $pattern)
+  log 3 "Matching grep pattern: $pattern | Result $match"
   echo "$match"
 }
-
-# Generate (flat) json by key-value pairs
-#
-#function to_json {
-#  echo '{'
-#  for line in $1; do
-#    key=$(echo $line | cut -d '=' -f 1)
-#    value=$(echo $line | cut -d '=' -f 2)
-#    echo "\"$ey\":\"$value\","
-#  done
-#  echo "}"
-#}
+function extract_key {
+  local data=$1
+  local key=$2
+  local pattern="^${key}=\K.*?$"
+  local match=$(echo "$data" | grep --only-matching --perl-regexp $pattern )
+  log 3 "Extracting: key=${key} value=${match}"
+  echo $match
+}
 
 # Check if executable is in PATH
 #
@@ -85,5 +91,45 @@ function check_fn_exists {
   local REQ_TYPE=${2:-function}
   LC_ALL=C type $1 2>&1 | grep -q "$REQ_TYPE"
   exit_on_error $? "$1 not found!"
+}
+
+function host_to_fqdn {
+  local host=$1
+  local zone_name=$2
+  if [ -z ${zone_name} ]; then
+    local zone_name=$(get_param "DOMAIN")
+  fi
+
+  if [ ${host} == "@" ]; then 
+    local FQDN=${zone_name}
+  else
+    local FQDN="${host}.${zone_name}"
+  fi
+  echo $FQDN 
+}
+
+function help {
+  echo "Usage: DDNS_SOURCE=/path/to/parameters.env $0"
+  echo ""
+  echo "Supported ENV variables:"
+  echo "  DDNS_MODE:        update-now: Update DDNS_HOSTNAMES using a provider"
+#  echo "                    check: Compare current DNS entry against current public ip"
+  echo "                    help: print this message"
+  echo "                    noop: May be used to include this script"
+  echo "  DDNS_SOURCE       source a file for ENV varaiables"
+  echo "  DDNS_PROVIDER:    Select a supportd provider (currently only cloudflare)"
+  echo "  DDNS_IP_PROVIDER: Select a supported public ip query service"
+  echo "  DDNS_HOSTNAMES:   list of hostnames to update. Hostnames do not include the domain."
+  echo "                    Using '@' updates the root of the domain"
+  echo "                    Example: 'www api @'"
+  echo "  DDNS_DOMAIN:      Your DDNS-Domain name"
+#  echo "  DDNS_QUERY:       Used only in check-mode. Compare ip address of a specific host (instead of all DDNS_HOSTNAMES"
+  echo "  DDNS_LOGLEVEL:    Change LogLevel: 0...No Logs, 1...Short Logs, 2...Detailed Logs, 3...Dump Debug info"
+  echo ""
+  echo "Provider Cloudflare (DDNS_PROVIDER=cloudflare):"
+  echo "  DDNS_CF_AUTHTYPE: Use token or apikey authentication"
+  echo "  DDNS_CF_TOKEN:    Token. Permissions nedded: All Zones Read, DNS Edit"
+  echo "  DDNS_CF_APIUSER:  Cloudflare Username for apikey authentication"
+  echo "  DDNS_CF_APIKEY:   Cloudflare API Key for apikey authentication"
 }
 
