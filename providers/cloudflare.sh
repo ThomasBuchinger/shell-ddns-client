@@ -7,7 +7,6 @@ function check_provider_cloudflare {
   check_fn_exists 'provider_cloudflare_auth'
   check_fn_exists 'provider_cloudflare_zone_to_id'
 
-  get_param "CF_DOMAIN" > /dev/null
   provider_cloudflare_auth > /dev/null
 }
 function ip_provider_cloudflare {
@@ -19,12 +18,8 @@ function ddns_provider_cloudflare {
   local HOSTNAME=$1
   local IP=$2
   local REC_TYPE=$3
-  local zone_name=$(get_param "CF_DOMAIN")
-  if [ ${HOSTNAME} == "@" ]; then 
-    local FQDN=${zone_name}
-  else
-    local FQDN="${HOSTNAME}.${zone_name}"
-  fi
+  local zone_name=$4
+  local FQDN=$(host_to_fqdn $HOSTNAME $zone_name)
 
   if [ ${CF_ZONE_ID:-""} == "" ]; then
     CF_ZONE_ID=$(provider_cloudflare_zone_to_id $zone_name) || exit $?
@@ -33,12 +28,23 @@ function ddns_provider_cloudflare {
   fi
   echo "zone_id=$CF_ZONE_ID"
   echo "zone_name=$zone_name"
-  echo "auth_info=$(provider_cloudflare_auth)"
+  echo "auth_info=$(provider_cloudflare_auth | tr ' ' '-')"
   
-  record_id=$(provider_cloudflare_name_to_id "${FQDN}" $CF_ZONE_ID) || exit $?
+  output=$(provider_cloudflare_name_to_id "${FQDN}" $CF_ZONE_ID) || exit $?
+  local record_id=$(extract_key "$output" "record_id")
+  local current_ip=$(extract_key "$output" "current_ip")
   echo "record_id=$record_id"
+  echo "old_ip=$current_ip"
+
+  if [ $current_ip == $IP ]; then
+    echo "update_needed=false"
+    echo "success=true"
+    exit 0
+  fi
+
 
   update=$(provider_cloudflare_update_record $REC_TYPE "${FQDN}" $IP $CF_ZONE_ID $record_id ) || exit $?
+  echo "update_needed=true"
   echo "success=true" 
 }
 function provider_cloudflare_name_to_id {
@@ -47,8 +53,10 @@ function provider_cloudflare_name_to_id {
   local CLOUDFLARE_ZONE_DNS_RECORDS_QUERY_API="https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records"  # GET
 
   record_list=$(provider_cloudflare_api "GET_RECORD ${name}" "${CLOUDFLARE_ZONE_DNS_RECORDS_QUERY_API}?per_page=50&name=${name}") || exit $?
+  local ip=$(extract_from "$record_list" "content" | head -1)
   local id=$(extract_from "$record_list" "id" | head -1)
-  echo ${id} 
+  echo "current_ip=${ip}"
+  echo "record_id=${id}"
 }
 
 function provider_cloudflare_zone_to_id {
