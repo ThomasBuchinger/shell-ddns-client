@@ -142,7 +142,7 @@ function provider_cloudflare_auth {
 function query_dig {
   local fqdn=$1
   local rec_type=${2:-A}
-  echo $(dig +short -t $rec_type $fqdn "@1.1.1.1")
+  echo $(dig +short -t $rec_type $fqdn)
 }
 
 
@@ -403,10 +403,25 @@ function check {
   log 1 "$message"
   if [ "$message" = "" ]; then exit 0; else exit 2; fi
 }
+function lazy_update {
+  $(check)
+  local check_rc=$?
+  if [ $check_rc -eq 0 ]; then
+    log 2 "IP up-to-date. Nothing to do."
+  elif [ $check_rc -eq 2 ]; then
+    log 2 "IP out-of-date. Performing DDNS Update"
+  else
+    log 2 "Error during Check"
+  fi
+
+  update_now
+  local update_rc=$?
+}
 
 case ${MODE} in
   update-now) update_now ;;
   check) check ;;
+  lazy-update) lazy_update ;;
   help) help ;;
   noop) ;;
   *) echo "Unknown mode: ${MODE}. Use DDNS_MODE=help to print help"; ;;

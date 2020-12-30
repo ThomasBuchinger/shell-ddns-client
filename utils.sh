@@ -119,6 +119,7 @@ function help {
   echo "Supported ENV variables:"
   echo "  DDNS_MODE:        update-now: Update DDNS_HOSTNAMES using a provider"
   echo "                    check: Compare current DNS entry against current public ip"
+  echo "                    lazy-update: Do a Check and perform a DDNS-Update if out-of-date"
   echo "                    help: print this message"
   echo "                    noop: May be used to include this script"
   echo "  DDNS_SOURCE       source a file for ENV varaiables"
