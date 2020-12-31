@@ -6,11 +6,11 @@ if [ ! -z "$SOURCE" ]; then
   source $SOURCE
 fi
 
-MODE=${DDNS_MODE:-help}                            # Change Script mode
-LOG_LEVEL=${DDNS_LOG_LEVEL:-1}                     # 0...Silent to 3...Debug
-IP_PROVIDER=${DDNS_IP_PROVIDER:-cloudflare}        # Where to query the public IP
-DDNS_PROVIDER=${DDNS_PROVIDER:-mock}               # DDNS provider to update
-DNS_QUERY_PROVIDER=${DDNS_DNS_QUERY_PROVIDER:-dig} # How to query DNS (for check)
+MODE=${DDNS_MODE:-help}                               # Change Script mode
+LOG_LEVEL=${DDNS_LOG_LEVEL:-1}                        # 0...Silent to 3...Debug
+IP_PROVIDER=${DDNS_IP_PROVIDER:-cloudflare}           # Where to query the public IP
+DDNS_PROVIDER=${DDNS_PROVIDER:-mock}                  # DDNS provider to update
+DNS_QUERY_PROVIDER=${DDNS_DNS_QUERY_PROVIDER:-getent} # How to query DNS (for check)
 
 # =========================================================
 # Main Functions
@@ -103,11 +103,13 @@ function lazy_update {
   $(check)
   local check_rc=$?
   if [ $check_rc -eq 0 ]; then
-    log 2 "IP up-to-date. Nothing to do."
+    log 1 "IP up-to-date. Nothing to do."
+    exit 0
   elif [ $check_rc -eq 2 ]; then
-    log 2 "IP out-of-date. Performing DDNS Update"
+    log 1 "IP out-of-date. Performing DDNS Update"
   else
-    log 2 "Error during Check"
+    log 1 "Error during Check"
+    exit 2
   fi
 
   update_now
