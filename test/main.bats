@@ -11,7 +11,8 @@ load 'helper'
   export DDNS_MODE=mymode
   run sh main.sh
   [ "$status" -eq 0 ]
-  [ "$output" = "Unknown mode: mymode. Use DDNS_MODE=help to print help" ]
+  echo "# $(logify 'Unknown mode: mymode. Use DDNS_MODE=help to print help')"
+  [[ "$output" =~ $(logify "Unknown mode: mymode. Use DDNS_MODE=help to print help") ]]
 }
 @test "main: Can source files" {
   skip

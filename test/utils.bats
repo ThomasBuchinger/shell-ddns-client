@@ -23,7 +23,7 @@ setup() {
 }
 @test "exit_on_error: exit on non-zero-rc and print error" {
   run exit_on_error 1 "fatal error"
-  [ "$status" -eq 1 ] 
+  [ "$status" -eq 2 ] 
   [ "$output" = "fatal error" ] 
 }
 
@@ -33,7 +33,7 @@ setup() {
 @test "log: Print logs to stdout" {
   export LOG_LEVEL=3
   run log 1 "my message"
-  [ "$output" = "my message" ] 
+  [[ "$output" =~ $(logify "my message") ]] 
 }
 @test "log: No output for debug logs" {
   export LOG_LEVEL=3
@@ -59,11 +59,11 @@ setup() {
   run get_param "PARAM2" "default"
   [ "$output" = "default" ]
 }
-@test "get_param: Exists if PARAM2 not defined" {
+@test "get_param: Exits if PARAM2 not defined" {
   export DDNS_PARAM1=hello
   run get_param "PARAM2"
-  [ "$status" -eq 1 ]
-  [ "$output" = "Parameter not found: DDNS_PARAM2" ]
+  [ "$status" -eq 2 ]
+  [[ "$output" =~ $(logify "Parameter not found: DDNS_PARAM2") ]]
 } 
 
 # =================================================================================================
@@ -71,6 +71,7 @@ setup() {
 # =================================================================================================
 @test "extract_from: JSON without space" {
   output=$(extract_from "$JSON_DATA" "key1")
+  echo "# DUMP $output"
   [ "$output" = "value1" ]
 } 
 @test "extract_from: last element in JSON" {
@@ -116,7 +117,7 @@ setup() {
 }
 @test "check_binary: fails in non-existent executable" {
   run check_binary "non-existent"
-  [ "$status" -eq 1 ] 
+  [ "$status" -eq 2 ] 
   [ "$output" = "Dependency not found: non-existent" ]
 }
 
@@ -136,7 +137,7 @@ setup() {
 }
 @test "check_fn_exists: fails in non-existent function" {
   run check_fn_exists "non-existent"
-  [ "$status" -eq 1 ] 
+  [ "$status" -eq 2 ] 
   [ "$output" = "non-existent not found!" ]
 }
 

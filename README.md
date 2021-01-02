@@ -25,7 +25,7 @@ General Parameters:
 Name | Description
 ---|---
 DDNS_MODE | **lazy-update**: check first, update only when required<br>**update-now**: Perform DDNS Update<br>**check**: Check if DDNS update is required<br>**help** (default): print help<br>**noop**: Do nothing. Allows script includes
-DDNS_SOURCE | Source/Read a file at startup. Useful for exporting parameters
+DDNS_CONF | Source/Read a file at startup and set ENV variables.<br>**NOTE**: The config-file is executed as a shel script!
 DDNS_LOG_LEVEL | 0...Only Fatal Errors<br>1...Info: Log important steps<br>2...Debug1: Log human-readable debug info<br>3...Debug2: Everything, including dumps 
 DDNS_IP_PROVIDER | Set Public-IP-Query-Service
 DDNS_PROVIDER | DDNS_SERVICE
